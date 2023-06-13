@@ -18,71 +18,42 @@
     implicit none
 
     !! Variables
-    complex*16, allocatable:: Rd(:), u_res(:), Uom(:)
-    complex*16, external:: K, UI, UIomega
-    real*8, allocatable :: a(:), dzeta(:)
-    real*8 :: t1, t2, t3, t4, tm, tp, eps, gr, pr
-    integer :: Nx, Nz, Np, Nom, i, j
-    real*8 :: an
-        
-    Nx=50; 
-    allocate(Rd(Nx))
-    allocate(u_res(Nx))
-    allocate(x(Nx))
-    !allocate(z(Nz))
+    complex*16, allocatable:: Rd(:), u_res(:)
+    complex*16, external:: UI
+    real*8, allocatable :: dzeta(:)
+    real*8 :: t1, t2, t3, t4, tm, tp, eps, gr, pr, hx
+    integer :: Np, i, j
     
-    !начальные данные
-    c=1d0 !фазовая скорость
-    f=3d0 !частота
-    h=1d0 !ширина слоя 
+    namelist/inp_values /c,f,h,Nx,x0,xn,Nz,z0,zn,eps,gr,pr  
+    
+    open(unit=4,file='inp.dat',status='old')
+    
+    read(4,inp_values)
+        
+    allocate(Rd(Nx), u_res(Nx), x(Nx))
+              
     kappa=2*pi*f/c; !волновое число
     
-    !инициализация x и z          
+!   инициализация x   
+    hx = (xn-x0)/Nx
     do i = 1, Nx
-        x(i) = real(i)/30;
-        print *, 'x ', x(i);
-    enddo
-    zj=-0.5d0;
-    
-    !нахождение t1 и t2.   t1 = dzeta1 / 2; t2 - максимальный из вещ-ных полюсов +1
-    an=pi/2/h;
-    Np=0; !кол-во вещ-ных полюсов
-    if (kappa>an) then
-        t1=sqrt(kappa*kappa-an*an);
-        i=1;
-        t2=t1;
-        do while (kappa>an .AND. i<=100)        
-            if(t2<sqrt(kappa*kappa-an*an)) then
-                t2=sqrt(kappa*kappa-an*an);
-            endif
-            i=i+1;
-            an=pi*(real(i)-1/2)/h;
-        enddo
-        t1=t1/2;
-        t2=t2+1;
-        Np=i;        
-    else
-        t1=0d0;
-        t2=0d0;
-    endif;
-    print *, 't1, t2, Np:', t1, t2, Np, t1*2;
-    
-    !вычисление полюсов dzeta
-    allocate(dzeta(Np));
-    do i = 1, Np
-        an=pi*(real(i)-1d0/2d0)/h;
-        dzeta(i) = sqrt(kappa*kappa-an*an);
-        print *, 'dzeta ', dzeta(i);
+        x(i) = x0 + i*hx;   print *, 'x ', x(i);
     enddo
         
-    !t - полюса на вещественной оси. 0, если их нет
-    t3=0d0;
-    t4=0d0;
-    tm=1d-2;
-    tp=0d0;
-    pr=1d-2;
-    gr=5d3;
-    eps=1d-4;
+!   вычисление полюсов 
+    Np = int(kappa*h/pi + 0.5d0)
+    allocate(dzeta(Np))
+    t1 = 0
+    t2 = 0
+    do i = 1, Np
+        dzeta(i) = sqrt(kappa*kappa-an(i)*an(i))
+        print *, 'dzeta ', dzeta(i)
+    enddo        
+    
+    ! [t1,t2],[t3,t4] - участки отклонения контура вниз (real*8)
+    ! [t2,t3] - участок отклонения контура вверх (real*8)
+    t1 = dzeta(Np)/2d0;  t2 = dzeta(1)+1d0;                                      
+    t3=t2; t4=t3; tm=1d-2; tp=0d0;   print *, 't1, t2, tm, Np:', t1, t2, tm, Np; 
     
     !вычисление интеграла с помощью DINN5. Результаты записываются в Rd.
     call DINN5(UI,t1,t2,t3,t4,tm,tp,eps,pr,gr,Nx,Rd)
@@ -91,18 +62,9 @@
     do i = 1, Nx
         u_res(i)=0d0;
         do j = 1, Np
-            u_res(i) = u_res(i) + (exp(-dzeta(j)*x(i)*cmplx(0,1)) * (exp(sigma(dzeta(j))*zj) - exp(-sigma(dzeta(j))*(zj+2d0*h)))) / (sigmapr(dzeta(j)) * (1d0+ exp(-2d0*sigma(dzeta(j))*h))); 
-            print *, 'RES ', u_res(i);
-            print *, 'CHISL1 EXP ', exp(-dzeta(j)*x(i)*cmplx(0,1));
-            print *, 'CHISL2 ', (exp(sigma(dzeta(j))*zj) - exp(-sigma(dzeta(j))*(zj+2d0*h)));
-            print *, 'ZNAM ', sigmapr(dzeta(j)) * (1d0 + exp(-2d0*sigma(dzeta(j))*h));
-            print *, 'ZNAM2 ', (1d0 + exp(-2d0*sigma(dzeta(j))*h));
-            print *, 'sigma ', sigma(dzeta(j));
-            
-            !u_res(i) = u_res(i) + (exp(dzeta(j)*x(i)*cmplx(0,1)) * (exp(sigma(-dzeta(j))*zj) - exp(-sigma(-dzeta(j))*(zj+2*h)))) / (sigmapr(-dzeta(j)) * (1+ exp(-2*sigma(-dzeta(j))*h)));
-            !u_res(i) = u_res(i) + (exp(dzeta(j)*x(i)*cmplx(0,1)) * sinh(real(sigma(-dzeta(j))*(zj+h))) / (sigmapr(-dzeta(j)) * cosh(real(sigma(-dzeta(j))*h))));
+            u_res(i) = u_res(i) + res(z0,dzeta(j),j) * exp(-cci*dzeta(j)*x(i))
         enddo
-        u_res(i) = u_res(i) * cmplx(0,-1);
+        u_res(i) = -cci * u_res(i);
     enddo
     
     !запись данных в файлы
@@ -113,44 +75,18 @@
     print *, 'x, |Rd|, |u_res|: '
     do i = 1, Nx
         !вывод в консоль
-        print *, x(i), abs(Rd(i)), abs(u_res(i));
+        print *, x(i), real(Rd(i)), real(u_res(i));
         !print *, x(i), real(Rd(i)), imag(Rd(i)), abs(Rd(i))
         print *
         !вывод в файлы
         Write(1,1) x(i)
-        Write(2,1) abs(Rd(i))
-        Write(3,1) abs(u_res(i))      
+        !Write(2,1) abs(Rd(i))
+        !Write(3,1) abs(u_res(i))  
+        Write(2,1) real(Rd(i))
+        Write(3,1) real(u_res(i))
     enddo
     
-    !!______________зависимость |u| от omega при x=const ___________________________________________________________________
-    !xi=1;
-    !Nom=60;
-    !allocate(omega(Nom));
-    !allocate(Uom(Nom));
-    !do i = 1, Nom
-    !    omega(i) = real(i)/10;
-    !    print *, 'omega ', omega(i);
-    !enddo
-    !
-    !!вычисление интеграла
-    !call DINN5(UIomega,t1,t2,t3,t4,tm,tp,eps,pr,gr,Nom,Uom)
-    !
-    !!запись данных в файлы
-    !open(unit = 4, file = 'UIomega/omega.txt', status = 'unknown')
-    !open(unit = 5, file = 'UIomega/u.txt', status = 'unknown')    
-    !
-    !print *, 'omega, |Uom|: '
-    !do i = 1, Nom
-    !    !вывод в консоль
-    !    print *, omega(i), abs(Uom(i));
-    !    !print *, x(i), real(Rd(i)), imag(Rd(i)), abs(Rd(i))
-    !    print *
-    !    !вывод в файлы
-    !    Write(4,1) omega(i)
-    !    Write(5,1) abs(Uom(i))     
-    !enddo
-    
-    deallocate(Rd, x, u_res, dzeta) !, omega, Uom
+    deallocate(Rd, x, u_res, dzeta) 
 1   format(f10.5)
 2   format(f10.5,2x,f20.4,2x,f20.15)     
     pause
@@ -158,28 +94,31 @@
     
     contains
     
-    complex*16 function sigma(al)
-        real*8 :: al, tempp
-        
-        if(kappa>abs(al)) then
-            tempp=-sqrt(kappa*kappa-al*al);
-            sigma=cmplx(0,tempp);
-        else
-            tempp=sqrt(al*al-kappa*kappa);
-            sigma=cmplx(tempp,0);
-        endif
+!   sigma(dzeta_n)
+    complex*16 function sig_n(n)
+        integer :: n
+        sig_n = -cci*an(n);        
     end function
     
-    complex*16 function sigmapr(al)
-        real*8 :: al, tempp
-        
-        if(kappa>abs(al)) then
-            tempp=al/sqrt(kappa*kappa-al*al);
-            sigmapr=cmplx(0,tempp);
-        else
-            tempp=al/sqrt(al*al-kappa*kappa);
-            sigmapr=cmplx(tempp,0);
-        endif
+!   производная от sigma(dzeta_n)
+    complex*16 function sig_pr_n(dzt,n)
+        real*8 :: dzt
+        integer :: n
+        sig_pr_n = dzt/sig_n(n);        
+    end function
+    
+!   числитель K
+    complex*16 function sh_n(z,n)
+        real*8 :: z
+        integer :: n
+        sh_n = cci * sin(-an(n)*(z+h))
+    end function
+    
+!   вычеты
+    complex*16 function res(z,dzt,n)
+        real*8 :: z,dzt
+        integer :: n
+        res = sh_n(z,n) / (dzt*sh_n(0d0,n)*h)        
     end function
     
     end program Waveguide
